@@ -46,6 +46,8 @@
 #include <QtQuickWidgets/QQuickWidget>
 #include <QApplication>
 
+#include <QObject>
+
 namespace openauto
 {
 namespace projection
@@ -64,6 +66,7 @@ enum H264_Decoder {
 
 // order of priority for decoders - dash will use the first decoder it can find in this list
 // for sake of the code, don't include "unknown" as a decoder to search for - this is the default case.
+//const H264_Decoder H264_Decoder_Priority_List[] = { nvcodec, v4l2, omx, libav };
 const H264_Decoder H264_Decoder_Priority_List[] = { rockchipmpp, nvcodec, v4l2, omx, libav };
 
 // A map of enum to actual pad name we want to use
@@ -85,7 +88,7 @@ inline const char* ToPipeline(H264_Decoder v)
     switch (v)
     {
         // we're going to assume that any machine with an nvidia card has a cpu powerful enough for video convert.
-        case rockchipmpp: return "mppvideodec format=I420";
+        case rockchipmpp: return "mppvideodec format=RGB";
         case nvcodec: return "nvh264dec ! videoconvert";
         case v4l2: return "v4l2h264dec";
         case omx: return "omxh264dec";
@@ -117,12 +120,23 @@ protected slots:
 
 public slots:
     void dumpDot();
+private slots:
+
 private:
     static GstPadProbeReturn convertProbe(GstPad* pad, GstPadProbeInfo* info, void*);
     static gboolean busCallback(GstBus*, GstMessage* message, gpointer*);
     H264_Decoder findPreferredVideoDecoder();
+ 
+    /////////////////////////////////////////////////////////////////////
+    void checkVideoWidgetVisibility();
+    bool eventFilter(QObject *obj, QEvent *event) override;
+    bool wasVisible = false;
+
+
+    //////////////////////////////////////////////////////////////////////
 
     bool firstHeaderParsed = false;
+
 
     QGst::ElementPtr videoSink_;
     QQuickWidget* videoWidget_;

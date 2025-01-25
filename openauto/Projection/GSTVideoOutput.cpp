@@ -16,7 +16,6 @@
 *  along with openauto. If not, see <http://www.gnu.org/licenses/>.
 */
 #ifdef USE_GST
-
 #include "aasdk/Common/Data.hpp"
 #include "openauto/Projection/GSTVideoOutput.hpp"
 #include "OpenautoLog.hpp"
@@ -28,6 +27,10 @@
 #include <iostream>
 #include <iomanip>
 
+#include <QGuiApplication>
+#include <QScreen>
+
+
 namespace openauto
 {
 namespace projection
@@ -38,41 +41,45 @@ GSTVideoOutput::GSTVideoOutput(configuration::IConfiguration::Pointer configurat
     , videoContainer_(videoContainer)
     , activeCallback_(activeCallback)
 {
+    
     this->moveToThread(QApplication::instance()->thread());
     videoWidget_ = new QQuickWidget(videoContainer_);
-
-    surface_ = new QGst::Quick::VideoSurface;
-    videoWidget_->rootContext()->setContextProperty(QLatin1String("videoSurface"), surface_);
-    videoWidget_->setSource(QUrl("qrc:/aa_video.qml"));
-    videoWidget_->setResizeMode(QQuickWidget::SizeRootObjectToView); 
-
-    videoSink_ = surface_->videoSink();
-
+    videoWidget_->setClearColor(QColor(18, 18, 18));
+    videoWidget_->installEventFilter(this);
 
     GError* error = nullptr;
-    std::string vidLaunchStr = "appsrc name=mysrc is-live=true block=false max-latency=100 do-timestamp=true stream-type=stream ! queue ! h264parse ! capssetter caps=\"video/x-h264,colorimetry=bt709\" ! ";
+
+
+    
+    //QSize screenSize = QGuiApplication::primaryScreen()->size();
+    //gst_video_overlay_set_render_rectangle(GST_VIDEO_OVERLAY(kmssink),
+    //screenSize.width()-videoContainer_->width(),
+    //screenSize.height()-videoContainer_->height(),
+    //videoContainer_->width(),
+    //videoContainer_->height());
+
+    std::string vidLaunchStr = "appsrc name=mysrc is-live=true block=true max-latency=100 do-timestamp=false stream-type=stream ! queue ! h264parse ! capssetter caps=\"video/x-h264\" ! ";
     vidLaunchStr += ToPipeline(findPreferredVideoDecoder());
     vidLaunchStr += " ! videocrop top=0 bottom=0 name=videocropper ! capsfilter caps=video/x-raw name=mycapsfilter";
+    
     
     vidPipeline_ = gst_parse_launch(vidLaunchStr.c_str(), &error);
     GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(vidPipeline_));
     gst_bus_add_watch(bus, (GstBusFunc)&GSTVideoOutput::busCallback, this);
     gst_object_unref(bus);
 
-    GstElement* sink = QGlib::RefPointer<QGst::Element>(videoSink_);
-    g_object_set(sink, "force-aspect-ratio", false, nullptr);
-    g_object_set(sink, "sync", false, nullptr);
-    g_object_set(sink, "async", false, nullptr);
 
     GstElement* capsFilter = gst_bin_get_by_name(GST_BIN(vidPipeline_), "mycapsfilter");
-    gst_bin_add(GST_BIN(vidPipeline_), GST_ELEMENT(sink));
-    gst_element_link(capsFilter, GST_ELEMENT(sink));
-
+    gst_bin_add(GST_BIN(vidPipeline_), kmssink);
+    gst_element_link(capsFilter, kmssink);
     vidSrc_ = GST_APP_SRC(gst_bin_get_by_name(GST_BIN(vidPipeline_), "mysrc"));
     gst_app_src_set_stream_type(vidSrc_, GST_APP_STREAM_TYPE_STREAM);
-
     vidCrop_ = GST_VIDEO_FILTER(gst_bin_get_by_name(GST_BIN(vidPipeline_), "videocropper"));
-
+    
+    
+    gst_element_set_state(vidPipeline_, GST_STATE_PLAYING);
+    checkVideoWidgetVisibility();
+    
     connect(this, &GSTVideoOutput::startPlayback, this, &GSTVideoOutput::onStartPlayback, Qt::QueuedConnection);
     connect(this, &GSTVideoOutput::stopPlayback, this, &GSTVideoOutput::onStopPlayback, Qt::QueuedConnection);
 }
@@ -81,6 +88,57 @@ GSTVideoOutput::~GSTVideoOutput()
 {
     gst_object_unref(vidPipeline_);
     gst_object_unref(vidSrc_);
+}
+
+void GSTVideoOutput::checkVideoWidgetVisibility()
+{
+   bool isVisible = videoWidget_->isVisible();
+   OPENAUTO_LOG(info) << "[GSTVideoOutput] VideoWidget visibility status: " << (isVisible ? "visible" : "not visible");
+   
+   GstElement* kmssink = gst_bin_get_by_name(GST_BIN(vidPipeline_), "kmssink");
+   QSize screenSize = QGuiApplication::primaryScreen()->size();
+   
+   if(isVisible)
+   {
+       gst_video_overlay_set_render_rectangle(GST_VIDEO_OVERLAY(kmssink), 
+           screenSize.width()-videoContainer_->width(), 
+           screenSize.height()-videoContainer_->height(), 
+           videoContainer_->width(), 
+           videoContainer_->height());
+       OPENAUTO_LOG(info) << "[GSTVideoOutput] Show kmssink";
+   }
+   else
+   {
+        //This is just shoving the videosink to the side if the videoWidget_ is not visible.
+        //Kind of a crackhead solution but it works and it's fast.
+       gst_video_overlay_set_render_rectangle(GST_VIDEO_OVERLAY(kmssink), 
+           screenSize.width()*2, 
+           0, 
+           videoContainer_->width(), 
+           videoContainer_->height());
+       OPENAUTO_LOG(info) << "[GSTVideoOutput] Hide kmssink";
+   }
+}
+
+bool GSTVideoOutput::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj == videoWidget_) {
+        switch (event->type()) {
+            case QEvent::Show:
+            case QEvent::Hide:
+            case QEvent::WindowStateChange: {
+                bool isVisible = videoWidget_->isVisible();
+                if (isVisible != wasVisible) {
+                    checkVideoWidgetVisibility();
+                    wasVisible = isVisible;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    return QObject::eventFilter(obj, event);
 }
 
 
@@ -139,10 +197,14 @@ gboolean GSTVideoOutput::busCallback(GstBus*, GstMessage* message, gpointer*)
 
 bool GSTVideoOutput::open()
 {
+    
+    
     GstElement* capsFilter = gst_bin_get_by_name(GST_BIN(vidPipeline_), "mycapsfilter");
-    GstPad* convertPad = gst_element_get_static_pad(capsFilter, "sink");
+    GstPad* convertPad = gst_element_get_static_pad(capsFilter, "kmssink");
     gst_pad_add_probe(convertPad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, &GSTVideoOutput::convertProbe, this, nullptr);
     gst_element_set_state(vidPipeline_, GST_STATE_PLAYING);
+
+    checkVideoWidgetVisibility();
 
     return true;
 }
@@ -174,12 +236,13 @@ bool GSTVideoOutput::init()
 {
     OPENAUTO_LOG(info) << "[GSTVideoOutput] init";
     emit startPlayback();
+    
 
     return true;
 }
 
 void GSTVideoOutput::write(uint64_t timestamp, const aasdk::common::DataConstBuffer& buffer)
-{
+{/*
     if(!firstHeaderParsed && this->configuration_->getWhitescreenWorkaround())
     {
         // I really really really hate this.
@@ -262,7 +325,7 @@ void GSTVideoOutput::write(uint64_t timestamp, const aasdk::common::DataConstBuf
 
         firstHeaderParsed=true;
     }
-    else
+    else */
     {
         GstBuffer* buffer_ = gst_buffer_new_and_alloc(buffer.size);
         gst_buffer_fill(buffer_, 0, buffer.cdata, buffer.size);
@@ -282,19 +345,7 @@ void GSTVideoOutput::onStartPlayback()
         activeCallback_(true);
     }
 
-    if(videoContainer_ == nullptr)
-    {
-        OPENAUTO_LOG(info) << "[GSTVideoOutput] No video container, setting projection fullscreen";
-        videoWidget_->setFocus();
-        videoWidget_->setWindowFlags(Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint);
-        videoWidget_->showFullScreen();
-    }
-    else
-    {
-        OPENAUTO_LOG(info) << "[GSTVideoOutput] Resizing to video container";
-        videoWidget_->resize(videoContainer_->size());
-    }
-    videoWidget_->show();
+
     QTimer::singleShot(10000, this, SLOT(dumpDot()));
 }
 
@@ -313,8 +364,12 @@ void GSTVideoOutput::onStopPlayback()
     }
 
     OPENAUTO_LOG(info) << "[GSTVideoOutput] stop.";
+    // First pause the pipeline
     gst_element_set_state(vidPipeline_, GST_STATE_PAUSED);
-    videoWidget_->hide();
+    // Then flush any pending buffers in the appsrc
+    gst_app_src_end_of_stream(vidSrc_);
+    // Finally set to NULL state
+    gst_element_set_state(vidPipeline_, GST_STATE_NULL);
 }
 
 void GSTVideoOutput::resize()
@@ -370,6 +425,58 @@ void GSTVideoOutput::resize()
     g_object_set(vidCrop_, "right", (int)marginWidth, nullptr);
     this->configuration_->setVideoMargins(QRect(0,0,(int)(marginWidth*2), (int)(marginHeight*2)));
 }
+
+
+
+/*
+void GSTVideoOutput::checkVideoWidgetVisibility()
+{
+    if(videoWidget_ != nullptr)
+    {
+        bool isVisible = videoWidget_->isVisible();
+        OPENAUTO_LOG(info) << "[GSTVideoOutput] VideoWidget visibility status: " << (isVisible ? "visible" : "not visible");
+        
+        // Get kmssink element
+        GstElement* kmssink = gst_bin_get_by_name(GST_BIN(vidPipeline_), "kmssink");
+        if(kmssink != nullptr)
+        {
+            if(isVisible)
+            {
+                // Set full size when visible
+                QSize screenSize = QGuiApplication::primaryScreen()->size();
+                gst_video_overlay_set_render_rectangle(GST_VIDEO_OVERLAY(kmssink), 
+                screenSize.width()-videoContainer_->width(), 
+                screenSize.height()-videoContainer_->height(), 
+                videoContainer_->width(), 
+                videoContainer_->height());
+                OPENAUTO_LOG(info) << "[GSTVideoOutput] Show kmssink";
+            }
+            else
+            {
+                // Set reduced size when not visible
+                //g_usleep(400000);
+                QSize screenSize = QGuiApplication::primaryScreen()->size();
+                gst_video_overlay_set_render_rectangle(GST_VIDEO_OVERLAY(kmssink), 
+                screenSize.width()*2, 
+                0, 
+                videoContainer_->width(), 
+                videoContainer_->height());
+                OPENAUTO_LOG(info) << "[GSTVideoOutput] Hide kmssink";
+            }
+            // Unref the kmssink element
+            //gst_object_unref(kmssink);
+        }
+        else
+        {
+            OPENAUTO_LOG(info) << "[GSTVideoOutput] Failed to get kmssink element";
+        }
+    }
+    else
+    {
+        OPENAUTO_LOG(info) << "[GSTVideoOutput] VideoWidget is null";
+    }
+}
+*/
 
 }
 }
