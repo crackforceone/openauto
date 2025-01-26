@@ -49,6 +49,11 @@ GSTVideoOutput::GSTVideoOutput(configuration::IConfiguration::Pointer configurat
 
     GError* error = nullptr;
 
+    GstElement* kmssink = gst_element_factory_make("kmssink", "kmssink");
+    g_object_set(G_OBJECT(kmssink), "plane-id", 87, nullptr);
+    g_object_set(G_OBJECT(kmssink), "skip-vsync", true , nullptr);
+    g_object_set(G_OBJECT(kmssink), "bus-id", "display-subsystem" , nullptr);
+
 
     
     //QSize screenSize = QGuiApplication::primaryScreen()->size();
