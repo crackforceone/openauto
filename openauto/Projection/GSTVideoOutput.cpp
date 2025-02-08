@@ -27,6 +27,13 @@
 #include <iostream>
 #include <iomanip>
 
+/////////////////////////
+#include <fcntl.h>
+#include <unistd.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+/////////////////////////
+
 #include <QGuiApplication>
 #include <QScreen>
 
@@ -41,7 +48,7 @@ GSTVideoOutput::GSTVideoOutput(configuration::IConfiguration::Pointer configurat
     , videoContainer_(videoContainer)
     , activeCallback_(activeCallback)
 {
-    
+    setupSuspendDetection();
     this->moveToThread(QApplication::instance()->thread());
     videoWidget_ = new QQuickWidget(videoContainer_);
     videoWidget_->setClearColor(QColor(18, 18, 18));
@@ -49,8 +56,25 @@ GSTVideoOutput::GSTVideoOutput(configuration::IConfiguration::Pointer configurat
 
     GError* error = nullptr;
 
+    // Get plane ID from DRM
+    int planeId = 93; // Default fallback
+    int fd = ::open("/dev/dri/card0", O_RDWR);  // Use global open() function
+    if (fd >= 0) {
+        drmModePlaneRes* planes = drmModeGetPlaneResources(fd);
+        if (planes && planes->count_planes > 1) {
+            drmModePlane* plane = drmModeGetPlane(fd, planes->planes[1]);
+            if (plane) {
+                planeId = plane->plane_id;
+                drmModeFreePlane(plane);
+            }
+            drmModeFreePlaneResources(planes);
+        }
+        ::close(fd);  // Also use global close()
+    }
+
+
     GstElement* kmssink = gst_element_factory_make("kmssink", "kmssink");
-    g_object_set(G_OBJECT(kmssink), "plane-id", 87, nullptr);
+    g_object_set(G_OBJECT(kmssink), "plane-id", planeId, nullptr);
     g_object_set(G_OBJECT(kmssink), "skip-vsync", true , nullptr);
     g_object_set(G_OBJECT(kmssink), "bus-id", "display-subsystem" , nullptr);
 
@@ -431,7 +455,26 @@ void GSTVideoOutput::resize()
     this->configuration_->setVideoMargins(QRect(0,0,(int)(marginWidth*2), (int)(marginHeight*2)));
 }
 
+void GSTVideoOutput::setupSuspendDetection()
+{
+    QDBusConnection::systemBus().connect(
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+        "PrepareForSleep",
+        this,
+        SLOT(handlePrepareForSleep(bool))
+    );
+}
 
+void GSTVideoOutput::handlePrepareForSleep(bool before)
+{
+    if (before) {
+        onStopPlayback();
+    } else if (!before) {
+        // Optional: Add resume handling if needed
+    }
+}
 
 /*
 void GSTVideoOutput::checkVideoWidgetVisibility()

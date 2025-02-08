@@ -48,6 +48,7 @@ find_package(OpenSSL REQUIRED)
 find_package(rtaudio REQUIRED)
 find_package(aasdk REQUIRED)
 find_package(h264 REQUIRED)
+find_package(Qt5 COMPONENTS DBus REQUIRED)
 find_package(Threads)
 
 include(${base_directory}/cmake_modules/gitversion.cmake)
@@ -59,6 +60,7 @@ if(GST_BUILD)
     find_package(GObject)
     find_package(Qt5GStreamer)
     find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBDRM REQUIRED libdrm)
     pkg_check_modules(GST REQUIRED
                       gstreamer-1.0>=1.4
                       gstreamer-sdp-1.0>=1.4

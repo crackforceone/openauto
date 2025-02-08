@@ -45,7 +45,11 @@
 #include <QtQml/QQmlContext>
 #include <QtQuickWidgets/QQuickWidget>
 #include <QApplication>
-
+//////////////////////////////////////////////////////////
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusMessage>
+//////////////////////////////////////////////////////////
 #include <QObject>
 
 namespace openauto
@@ -121,6 +125,7 @@ protected slots:
 public slots:
     void dumpDot();
 private slots:
+    void handlePrepareForSleep(bool before);
 
 private:
     static GstPadProbeReturn convertProbe(GstPad* pad, GstPadProbeInfo* info, void*);
@@ -131,6 +136,9 @@ private:
     void checkVideoWidgetVisibility();
     bool eventFilter(QObject *obj, QEvent *event) override;
     bool wasVisible = false;
+
+    void setupSuspendDetection();
+    bool isPlaying = false;
 
 
     //////////////////////////////////////////////////////////////////////

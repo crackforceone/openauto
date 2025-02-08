@@ -108,6 +108,7 @@ target_include_directories(openauto PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${RTAUDIO_INCLUDE_DIRS}
         ${Protobuf_INCLUDE_DIRS}
+        ${LIBDRM_INCLUDE_DIRS}
         )
 
 target_link_libraries(openauto PUBLIC
@@ -119,8 +120,10 @@ target_link_libraries(openauto PUBLIC
         rtaudio
         Qt5::Bluetooth
         Qt5::MultimediaWidgets
+        Qt5::DBus
         btservice_proto
         ${Protobuf_LIBRARIES}
+        ${LIBDRM_LIBRARIES}
         )
 
 install(TARGETS openauto
